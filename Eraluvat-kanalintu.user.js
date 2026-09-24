@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.1.0
+// @version      1.2.0
 // @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen, max 7 aktiivista varausta.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
@@ -30,6 +30,8 @@
   const SESSION = 'https://www.eraluvat.fi/api/auth/session';
   const K_ENABLED = 'eraluvat_auto_enabled';
   const K_STATE = 'eraluvat_auto_state';
+  const K_PUSH_USER = 'eraluvat_pushover_user';
+  const K_PUSH_TOKEN = 'eraluvat_pushover_token';
   const TZ = 'Europe/Helsinki';
 
   let timer = null;
@@ -135,6 +137,73 @@
     return s.eraAccessToken;
   }
 
+  function pushConfigured() {
+    return !!(localStorage.getItem(K_PUSH_USER) && localStorage.getItem(K_PUSH_TOKEN));
+  }
+
+  function configurePush() {
+    const currentUser = localStorage.getItem(K_PUSH_USER) || '';
+    const currentToken = localStorage.getItem(K_PUSH_TOKEN) || '';
+    const user = prompt('Pushover User Key:', currentUser);
+    if (user === null) return;
+    const token = prompt('Pushover Application API Token:', currentToken);
+    if (token === null) return;
+
+    const u = user.trim();
+    const t = token.trim();
+    if (!u || !t) {
+      localStorage.removeItem(K_PUSH_USER);
+      localStorage.removeItem(K_PUSH_TOKEN);
+      log('Pushover-asetukset poistettu.');
+    } else {
+      localStorage.setItem(K_PUSH_USER, u);
+      localStorage.setItem(K_PUSH_TOKEN, t);
+      log('Pushover-asetukset tallennettu vain tälle iPadille.');
+    }
+    render();
+  }
+
+  async function sendPush(title, message) {
+    const user = localStorage.getItem(K_PUSH_USER);
+    const token = localStorage.getItem(K_PUSH_TOKEN);
+    if (!user || !token) return false;
+
+    const body = new URLSearchParams({
+      token,
+      user,
+      title,
+      message,
+      priority: '2',
+      retry: '30',
+      expire: '600',
+      url: 'https://www.eraluvat.fi/',
+      url_title: 'Avaa Eräluvat'
+    });
+
+    // Pushover ei salli selaimesta CORS-vastauksen lukemista.
+    // no-cors riittää lähetykseen; onnistuminen varmistetaan käytännössä push-testillä.
+    await fetch('https://api.pushover.net/1/messages.json', {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {'Content-Type':'application/x-www-form-urlencoded'},
+      body: body.toString()
+    });
+    return true;
+  }
+
+  async function testPush() {
+    if (!pushConfigured()) {
+      configurePush();
+      if (!pushConfigured()) return;
+    }
+    try {
+      await sendPush('Eräluvat TESTI', 'Pushover-ilmoitus toimii. Oikea hälytys tulee vain onnistuneesta autovarauksesta.');
+      log('Pushover-testiviesti lähetetty.');
+    } catch (e) {
+      log('Pushover-testin lähetys epäonnistui: ' + e.message);
+    }
+  }
+
   async function reserve(area, cap, dateKey, token) {
     const payload = {
       areaId: area.areaId,
@@ -166,6 +235,7 @@
 
     remember(area.areaId, area.name, dateKey, body);
     log(`VARATTU: ${area.name} ${fiDate(dateKey)}`);
+    return body;
   }
 
   async function candidates() {
@@ -203,15 +273,31 @@
 
       log(`Loytyi ${list.length} haluttua vapaata paivaa.`);
       const token = await getToken();
+      const reservedNow = [];
 
       for (const x of list) {
         if (left <= 0) break;
         if (already(x.area.areaId, x.date)) continue;
         try {
           await reserve(x.area, x.cap, x.date, token);
+          reservedNow.push(`${x.area.name} ${fiDate(x.date)}`);
           left--;
         } catch (e) {
           log(`Ei onnistunut: ${e.message}`);
+        }
+      }
+
+      if (reservedNow.length) {
+        const msg = reservedNow.join('\n') + '\n\nLuvat ovat ostoskorissa. Maksa ne mahdollisimman pian.';
+        if (pushConfigured()) {
+          try {
+            await sendPush('ERALUVAT: lupa varattu!', msg);
+            log('Pushover-hälytys lähetetty.');
+          } catch (e) {
+            log('Pushover-hälytys epäonnistui: ' + e.message);
+          }
+        } else {
+          log('VAROITUS: Pushover ei ole asetettu.');
         }
       }
     } catch (e) {
@@ -266,7 +352,8 @@
         tarkistus noin 5 s<br>
         viimeisin: ${lastCheck ? lastCheck.toLocaleTimeString('fi-FI') : '-'}<br>
         aktiivisia: ${active.length}/7<br>
-        Wake Lock: ${wakeLock ? 'paalla' : 'ei paalla'}
+        Wake Lock: ${wakeLock ? 'paalla' : 'ei paalla'}<br>
+        Pushover: ${pushConfigured() ? 'asetettu' : 'ei asetettu'}
       </div>
       <div id="eraluvat-buttons"></div>
       <div style="margin-top:8px;font-size:11px;opacity:.8">${logLines.join('<br>')}</div>
@@ -275,6 +362,8 @@
     const box = panel.querySelector('#eraluvat-buttons');
     box.appendChild(button(on() ? 'PYSAYTA' : 'KAYNNISTA', () => setOn(!on()), true));
     box.appendChild(button('TARKISTA NYT', () => check()));
+    box.appendChild(button('PUSH ASETUKSET', () => configurePush()));
+    box.appendChild(button('TESTAA PUSH', () => testPush()));
   }
 
   document.addEventListener('visibilitychange', () => {
