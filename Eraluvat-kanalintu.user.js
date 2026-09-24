@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.2.0
+// @version      1.2.1
 // @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen, max 7 aktiivista varausta.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      api.pushover.net
 // ==/UserScript==
 
 (() => {
@@ -163,32 +164,44 @@
     render();
   }
 
-  async function sendPush(title, message) {
-    const user = localStorage.getItem(K_PUSH_USER);
-    const token = localStorage.getItem(K_PUSH_TOKEN);
-    if (!user || !token) return false;
+  function sendPush(title, message) {
+    return new Promise((resolve, reject) => {
+      const user = localStorage.getItem(K_PUSH_USER);
+      const token = localStorage.getItem(K_PUSH_TOKEN);
+      if (!user || !token) {
+        reject(new Error('Pushover User Key tai API Token puuttuu.'));
+        return;
+      }
 
-    const body = new URLSearchParams({
-      token,
-      user,
-      title,
-      message,
-      priority: '2',
-      retry: '30',
-      expire: '600',
-      url: 'https://www.eraluvat.fi/',
-      url_title: 'Avaa Eräluvat'
-    });
+      const body = new URLSearchParams({
+        token,
+        user,
+        title,
+        message,
+        priority: '2',
+        retry: '30',
+        expire: '600',
+        url: 'https://www.eraluvat.fi/',
+        url_title: 'Avaa Eräluvat'
+      }).toString();
 
-    // Pushover ei salli selaimesta CORS-vastauksen lukemista.
-    // no-cors riittää lähetykseen; onnistuminen varmistetaan käytännössä push-testillä.
-    await fetch('https://api.pushover.net/1/messages.json', {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {'Content-Type':'application/x-www-form-urlencoded'},
-      body: body.toString()
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: 'https://api.pushover.net/1/messages.json',
+        headers: {'Content-Type':'application/x-www-form-urlencoded'},
+        data: body,
+        timeout: 15000,
+        onload: response => {
+          if (response.status >= 200 && response.status < 300) {
+            resolve(true);
+          } else {
+            reject(new Error('Pushover HTTP ' + response.status + ': ' + (response.responseText || '')));
+          }
+        },
+        onerror: () => reject(new Error('Pushover-verkkopyyntö epäonnistui.')),
+        ontimeout: () => reject(new Error('Pushover-verkkopyyntö aikakatkaistiin.'))
+      });
     });
-    return true;
   }
 
   async function testPush() {
