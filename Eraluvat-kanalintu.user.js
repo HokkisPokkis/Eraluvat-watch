@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.2.1
+// @version      1.3.0
 // @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen, max 7 aktiivista varausta.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
@@ -14,7 +14,6 @@
 
   const CFG = {
     pollMs: 5000,
-    maxActive: 7,
     productId: 5,
     areas: [
       { name: 'Vesijako', areaId: 983 },
@@ -274,12 +273,6 @@
     busy = true;
 
     try {
-      let left = CFG.maxActive - activeReservations().length;
-      if (left <= 0) {
-        log('7 aktiivista varausta taynna.');
-        return;
-      }
-
       const list = await candidates();
       lastCheck = new Date();
       if (!list.length) return;
@@ -289,12 +282,10 @@
       const reservedNow = [];
 
       for (const x of list) {
-        if (left <= 0) break;
         if (already(x.area.areaId, x.date)) continue;
         try {
           await reserve(x.area, x.cap, x.date, token);
           reservedNow.push(`${x.area.name} ${fiDate(x.date)}`);
-          left--;
         } catch (e) {
           log(`Ei onnistunut: ${e.message}`);
         }
@@ -361,10 +352,10 @@
       <div style="margin:6px 0"><b style="color:${on()?'#68e57b':'#ff8080'}">${on()?'VAHTI PAALLA':'VAHTI POIS'}</b></div>
       <div style="font-size:12px;opacity:.9">
         Vesijako -> Evo<br>
-        1 aikuinen / paiva, max 7<br>
+        1 aikuinen / paiva<br>
         tarkistus noin 5 s<br>
         viimeisin: ${lastCheck ? lastCheck.toLocaleTimeString('fi-FI') : '-'}<br>
-        aktiivisia: ${active.length}/7<br>
+        muistissa: ${active.length}<br>
         Wake Lock: ${wakeLock ? 'paalla' : 'ei paalla'}<br>
         Pushover: ${pushConfigured() ? 'asetettu' : 'ei asetettu'}
       </div>
