@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.3.2
+// @version      1.4.0
 // @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen / paiva.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
@@ -32,6 +32,7 @@
   const K_STATE = 'eraluvat_auto_state';
   const K_PUSH_USER = 'eraluvat_pushover_user';
   const K_PUSH_TOKEN = 'eraluvat_pushover_token';
+  const K_DIAG = 'eraluvat_diag_log_v1';
   const TZ = 'Europe/Helsinki';
 
   let timer = null;
@@ -39,6 +40,7 @@
   let wakeLock = null;
   let lastCheck = null;
   let logLines = [];
+  const lastFreeSignature = {};
 
   const on = () => localStorage.getItem(K_ENABLED) === '1';
 
@@ -99,6 +101,74 @@
     logLines = logLines.slice(0, 8);
     console.log('[Eraluvat]', msg);
     render();
+  }
+
+  function loadDiag() {
+    try {
+      const x = JSON.parse(localStorage.getItem(K_DIAG) || '[]');
+      return Array.isArray(x) ? x : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function diag(msg) {
+    const rows = loadDiag();
+    const stamp = new Intl.DateTimeFormat('fi-FI', {
+      timeZone: TZ,
+      year:'numeric', month:'2-digit', day:'2-digit',
+      hour:'2-digit', minute:'2-digit', second:'2-digit'
+    }).format(new Date());
+    rows.push(`${stamp}  ${msg}`);
+    if (rows.length > 500) rows.splice(0, rows.length - 500);
+    localStorage.setItem(K_DIAG, JSON.stringify(rows));
+    console.log('[Eraluvat DIAG]', msg);
+  }
+
+  function showDiag() {
+    const old = document.getElementById('eraluvat-diag-modal');
+    if (old) old.remove();
+
+    const wrap = document.createElement('div');
+    wrap.id = 'eraluvat-diag-modal';
+    wrap.style.cssText = 'position:fixed;z-index:2147483647;inset:20px;background:#111;color:#fff;border:1px solid #777;border-radius:12px;padding:12px;display:flex;flex-direction:column;box-shadow:0 8px 30px #000a';
+
+    const title = document.createElement('div');
+    title.textContent = 'Eräluvat diagnostiikkaloki';
+    title.style.cssText = 'font-weight:800;font-size:18px;margin-bottom:8px';
+
+    const ta = document.createElement('textarea');
+    ta.readOnly = true;
+    ta.value = loadDiag().join('\n');
+    ta.style.cssText = 'flex:1;min-height:240px;background:#080808;color:#eee;border:1px solid #555;border-radius:8px;padding:8px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace';
+
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-top:8px';
+
+    row.appendChild(button('KOPIOI', async () => {
+      try {
+        await navigator.clipboard.writeText(ta.value);
+        log('Diagnostiikkaloki kopioitu.');
+      } catch {
+        ta.focus();
+        ta.select();
+      }
+    }));
+
+    row.appendChild(button('TYHJENNÄ', () => {
+      if (confirm('Tyhjennetäänkö diagnostiikkaloki?')) {
+        localStorage.removeItem(K_DIAG);
+        ta.value = '';
+        render();
+      }
+    }));
+
+    row.appendChild(button('SULJE', () => wrap.remove(), true));
+
+    wrap.appendChild(title);
+    wrap.appendChild(ta);
+    wrap.appendChild(row);
+    document.documentElement.appendChild(wrap);
   }
 
   async function lockScreen() {
@@ -228,6 +298,8 @@
       startDate: cap.from
     };
 
+    diag(`POST START ${area.name} ${fiDate(dateKey)} available=${cap.available}`);
+
     const r = await fetch(`${API}/order`, {
       method:'POST',
       headers:{
@@ -242,9 +314,12 @@
     try { body = await r.json(); } catch {}
 
     if (!r.ok) {
-      throw new Error(`${area.name} ${fiDate(dateKey)}: ${body?.message || body?.error || 'HTTP '+r.status}`);
+      const detail = body?.message || body?.error || 'ei virhetekstiä';
+      diag(`POST FAIL ${area.name} ${fiDate(dateKey)} HTTP=${r.status} detail=${String(detail).slice(0,180)}`);
+      throw new Error(`${area.name} ${fiDate(dateKey)}: ${detail || 'HTTP '+r.status}`);
     }
 
+    diag(`POST OK ${area.name} ${fiDate(dateKey)} HTTP=${r.status} orderId=${body?.id || '-'} validTo=${body?.validTo || '-'}`);
     remember(area.areaId, area.name, dateKey, body);
     log(`VARATTU: ${area.name} ${fiDate(dateKey)}`);
     return body;
@@ -257,11 +332,22 @@
     for (const area of CFG.areas) {
       const data = await getCalendar(area.areaId);
       const caps = Array.isArray(data?.capacities) ? data.capacities : [];
-      const found = caps
-        .map(cap => ({ cap, date: localDateKey(cap.from) }))
-        .filter(x => wanted.has(x.date) && Number(x.cap.available) > 0 && !already(area.areaId, x.date))
+      const mapped = caps.map(cap => ({ cap, date: localDateKey(cap.from) }));
+      const rawFree = mapped
+        .filter(x => wanted.has(x.date) && Number(x.cap.available) > 0)
         .sort((a,b) => a.date.localeCompare(b.date));
 
+      const signature = rawFree.map(x => `${x.date}=${x.cap.available}`).join(',');
+      if (signature !== lastFreeSignature[area.areaId]) {
+        lastFreeSignature[area.areaId] = signature;
+        if (rawFree.length) {
+          diag(`FREE ${area.name}: ${rawFree.map(x => `${fiDate(x.date)}=${x.cap.available}`).join(', ')}`);
+        } else {
+          diag(`FREE ${area.name}: ei valittuja päiviä vapaana`);
+        }
+      }
+
+      const found = rawFree.filter(x => !already(area.areaId, x.date));
       for (const x of found) out.push({ area, ...x });
     }
 
@@ -278,6 +364,7 @@
       if (!list.length) return;
 
       log(`Loytyi ${list.length} haluttua vapaata paivaa.`);
+      diag(`CANDIDATES order: ${list.map(x => `${x.area.name} ${fiDate(x.date)} avail=${x.cap.available}`).join(' | ')}`);
       const token = await getToken();
       const reservedNow = [];
 
@@ -357,7 +444,8 @@
         viimeisin: ${lastCheck ? lastCheck.toLocaleTimeString('fi-FI') : '-'}<br>
         muistissa: ${active.length}<br>
         Wake Lock: ${wakeLock ? 'paalla' : 'ei paalla'}<br>
-        Pushover: ${pushConfigured() ? 'asetettu' : 'ei asetettu'}
+        Pushover: ${pushConfigured() ? 'asetettu' : 'ei asetettu'}<br>
+        diag: ${loadDiag().length} riviä
       </div>
       <div id="eraluvat-buttons"></div>
       <div style="margin-top:8px;font-size:11px;opacity:.8">${logLines.join('<br>')}</div>
@@ -368,6 +456,7 @@
     box.appendChild(button('TARKISTA NYT', () => check()));
     box.appendChild(button('PUSH ASETUKSET', () => configurePush()));
     box.appendChild(button('TESTAA PUSH', () => testPush()));
+    box.appendChild(button('DIAG LOKI', () => showDiag()));
   }
 
   document.addEventListener('visibilitychange', () => {
