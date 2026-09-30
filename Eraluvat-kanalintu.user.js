@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.3.0
-// @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen, max 7 aktiivista varausta.
+// @version      1.3.1
+// @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen / paiva.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
@@ -334,7 +334,7 @@
   }
 
   const panel = document.createElement('div');
-  panel.style.cssText = 'position:fixed;z-index:2147483647;top:12px;right:12px;width:min(390px,calc(100vw - 24px));background:#171b20;color:white;border-radius:12px;padding:12px;box-shadow:0 6px 22px #0008;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';
+  panel.style.cssText = 'position:fixed;z-index:2147483647;top:90px;right:12px;width:min(390px,calc(100vw - 24px));max-height:calc(100vh - 110px);overflow:auto;background:#171b20;color:white;border-radius:12px;padding:12px;box-shadow:0 6px 22px #0008;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif';
   document.documentElement.appendChild(panel);
 
   function button(text, fn, primary=false) {
