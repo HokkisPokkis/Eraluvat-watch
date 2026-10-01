@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.4.1
+// @version      1.4.2
 // @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen / paiva.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
@@ -23,7 +23,10 @@
       '2026-09-27','2026-09-29','2026-10-04','2026-10-07','2026-10-09','2026-10-10','2026-10-11',
       '2026-10-16','2026-10-18','2026-10-22','2026-10-28','2026-10-29','2026-10-30','2026-10-31',
       '2026-11-01','2026-11-02','2026-11-03','2026-11-04','2026-11-05','2026-11-06','2026-11-07','2026-11-08'
-    ]
+    ],
+    extraDatesByArea: {
+      337: ['2026-10-03'] // Evo only
+    }
   };
 
   const API = 'https://api.eraluvat.fi/orders/v1';
@@ -327,10 +330,13 @@
   }
 
   async function candidates() {
-    const wanted = new Set(CFG.dates);
     const out = [];
 
     for (const area of CFG.areas) {
+      const wanted = new Set([
+        ...CFG.dates,
+        ...(CFG.extraDatesByArea?.[area.areaId] || [])
+      ]);
       const data = await getCalendar(area.areaId);
       const caps = Array.isArray(data?.capacities) ? data.capacities : [];
       const mapped = caps.map(cap => ({ cap, date: localDateKey(cap.from) }));
