@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Eraluvat kanalintu autovaraaja
 // @namespace    https://www.eraluvat.fi/
-// @version      1.4.0
+// @version      1.4.1
 // @description  Vesijako -> Evo, vain valitut paivat, 1 aikuinen / paiva.
 // @match        https://www.eraluvat.fi/*
 // @run-at       document-idle
@@ -310,16 +310,17 @@
       body:JSON.stringify(payload)
     });
 
+    const raw = await r.text();
     let body = null;
-    try { body = await r.json(); } catch {}
+    try { body = raw ? JSON.parse(raw) : null; } catch {}
 
     if (!r.ok) {
-      const detail = body?.message || body?.error || 'ei virhetekstiä';
-      diag(`POST FAIL ${area.name} ${fiDate(dateKey)} HTTP=${r.status} detail=${String(detail).slice(0,180)}`);
-      throw new Error(`${area.name} ${fiDate(dateKey)}: ${detail || 'HTTP '+r.status}`);
+      const detail = body?.message || body?.error || raw || 'ei virhetekstiä';
+      diag(`POST FAIL ${area.name} ${fiDate(dateKey)} HTTP=${r.status} detail=${String(detail).replace(/\s+/g,' ').slice(0,500)}`);
+      throw new Error(`${area.name} ${fiDate(dateKey)}: HTTP ${r.status}`);
     }
 
-    diag(`POST OK ${area.name} ${fiDate(dateKey)} HTTP=${r.status} orderId=${body?.id || '-'} validTo=${body?.validTo || '-'}`);
+    diag(`POST OK ${area.name} ${fiDate(dateKey)} HTTP=${r.status} orderId=${body?.id || '-'} validTo=${body?.validTo || '-'} rows=${Array.isArray(body?.orderRows) ? body.orderRows.length : '-'}`);
     remember(area.areaId, area.name, dateKey, body);
     log(`VARATTU: ${area.name} ${fiDate(dateKey)}`);
     return body;
